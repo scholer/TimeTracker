@@ -223,6 +223,22 @@ def filter_labels(timespans_by_label, args):
                 timespans_by_label.pop(key)
     return timespans_by_label
 
+def filter_empty(timespans_by_label):
+    """ Remove zero-length items in timespans_by_labels (can happen after filtering by start/end time). """
+    for key in list(timespans_by_label.keys()):
+        if not timespans_by_label[key]:
+            logger.debug("Removing label with zero timespans: %s", key)
+            timespans_by_label.pop(key)
+    return timespans_by_label
+
+def filter_main(timespans_by_label, args):
+    """ Perform all filtering, as specified by args. """
+    filter_labels(timespans_by_label, args)
+    timespans_by_label = filter_timespans(timespans_by_label, args)
+    if args["discart_empty_labels"]:
+        filter_empty(timespans_by_label)
+    return timespans_by_label
+
 def plot_timeline(timespans_by_label):
     """
     Make a time line with timespans by label.
@@ -296,7 +312,7 @@ def parse_args(argv=None):
 
     parser = argparse.ArgumentParser(description="Cadnano apply sequence script.")
     parser.add_argument("--verbose", "-v", action="count", help="Increase verbosity.")
-    parser.add_argument("--testing", "-p", action="store_true", help="Run app in simple test mode.")
+    parser.add_argument("--testing", action="store_true", help="Run app in simple test mode.")
     #parser.add_argument("--profile", "-p", action="store_true", help="Profile app execution.")
     #parser.add_argument("--print-profile", "-P", action="store_true", help="Print profiling statistics.")
     #parser.add_argument("--profile-outputfn", default="scaffold_rotation.profile",
@@ -324,6 +340,7 @@ def parse_args(argv=None):
 
     ## Done: Filter dates --start-after  --end-before
     ## Done: Filter labels
+    ## Done: Add short-hand arguments for date filtering: --today, --yesterday, --this-week, --last-week, --this-month
     ## TODO: More plot types with totals (pie charts, bar plots, etc)
     ## TODO: User-customized colors for labels
 
@@ -334,8 +351,16 @@ def parse_args(argv=None):
     parser.add_argument("--end-after", nargs=2, help="Only consider entries with enddate after this.")
     parser.add_argument("--end-before", nargs=2, help="Only consider entries with enddate before this.")
 
+    parser.add_argument("--today", action="store_true", help="Only consider entries with startdate during today. "
+                        "(Note that date short-hands are mutually exclusive at the moment.)")
+    parser.add_argument("--yesterday", action="store_true", help="Only consider entries with startdate during yesterday.")
+    parser.add_argument("--this-week", action="store_true", help="Only consider entries with startdate during this week.")
+
     parser.add_argument("--labels", "-l", nargs="+", help="Only include these labels.")
-    parser.add_argument("--exclude-labels", "-l", nargs="+", help="Exclude these labels.")
+    parser.add_argument("--exclude-labels", nargs="+", help="Exclude these labels.")
+
+    parser.add_argument("--discart-empty-labels", action="store_true",
+                        help="Discart labels with zero timespans (can happen after filtering).")
 
     parser.add_argument("files", nargs="+", metavar="file",
                         help="One or more files with time tracker data in simple line-by-line format.")
@@ -376,6 +401,16 @@ def process_args(argns=None, argv=None):
         print("WARNING: File/pattern '%s' does not match any files." % pattern)
     args['files'] = [fname for pattern, res in file_pattern_matches for fname in res]
 
+    now = datetime.now()
+    if args.get("today"):
+        args["start_after"] = datetime(now.year, now.month, now.day)
+    if args.get("yesterday"):
+        args["start_before"] = datetime(now.year, now.month, now.day)  # before today midnight
+        args["start_after"] = args["start_before"] - timedelta(1)       # after yesterday midnight
+    if args.get("this_week"):
+        args["start_after"] = datetime(now.year, now.month, now.day) - timedelta(6)
+
+
     time_criteria = ("start_before", "start_after", "end_before", "end_after")
     for criteria in time_criteria:
         if (not args.get(criteria)) or isinstance(args[criteria], datetime):
@@ -394,19 +429,23 @@ def main(argv=None):
     lines = parse_files(args['files'])
     lines_by_label = get_lines_by_label(lines)
     timespans_by_label = find_timespans_by_label(lines_by_label)
+    timespans_by_label = filter_main(timespans_by_label, args)
     if args["timelineplot"]:
         plot_timeline(timespans_by_label)
 
-
-def test():
+def test1():
     """ Primitive test. """
     testfile = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "tests", "testdata", "TimeTracker.txt")
     args = {"files": [testfile],
             #"start_before": datetime(2015, 6, 2),
             #"exclude_labels": ["gloves on"],
-            "labels": ["gloves on", "experiment calculation"],
+            #"labels": ["gloves on", "experiment calculation"],
+            "today": True,
             }
+    argv = ["--today", testfile]
+    args = process_args(None, argv)
+    print("args: %s")
     logging.basicConfig(level=10) #, style="{")
     lines = parse_files(args['files'])
     print("\nLines:")
@@ -420,16 +459,23 @@ def test():
     #print("\ntimespans_by_label:")
     #print(timespans_by_label)
 
-    timespans_by_label = filter_timespans(timespans_by_label, args)
-
-    filter_labels(timespans_by_label, args)
-
     plot_timeline(timespans_by_label)
+
+def test2():
+    """ Primitive test. """
+    logging.basicConfig(level=10) #, style="{")
+    testfile = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "tests", "testdata", "TimeTracker.txt")
+    argv = ["--today", "--discart-empty-labels", testfile] + sys.argv[2:]
+    print("test argv:", argv)
+    main(argv)
 
 
 
 if __name__ == '__main__':
-    if "--test" in sys.argv:
+    if "--test2" in sys.argv:
+        test2()
+    elif "--test" in sys.argv:
         test()
     else:
         main()
