@@ -77,10 +77,10 @@ datestrptime = "%Y-%m-%d %H.%M" #"yyyy-mm-dd HH.MM"
 
 def parse_files(filenames):
     """
-    All filenames are parsed into the same data structure.
+    All filenames are parsed into the same data structure, a list of dicts with items:
+        {datetime, action, label, lineno}
     """
     lines = []
-    lines_by_label = defaultdict(list)
     for filename in filenames:
         with open(filename) as filep:
             for lineno, line in enumerate(filep):
@@ -89,49 +89,94 @@ def parse_files(filenames):
                     logger.info("%s:%s did not match line regex.", filename, lineno)
                     #logger.info("{}:{} did not match line regex.", filename, lineno)
                     continue
-                label = match.group("label")
-                action = match.group("action")
+                label = match.group("label").title()
+                action = match.group("action").lower()
                 time = datetime.strptime(match.group("datetime"), datestrptime)
                 linedict = {"datetime": time,
                             "action": action,
                             "label": label,
+                            "filename": filename,
                             "lineno": lineno
                            }
                 lines.append(linedict)
-                lines_by_label[label].append(linedict)
+    return lines
+
+
+def get_lines_by_label(lines, auto_stop_on_start=True, discart_redundant_stops=False):
+    """
+    lines is a list of dicts as returned by parse_files.
+    If auto_stop_on_start is True (default), then
+    """
+    # First sort lines by datetime, in place:
+    # (this makes downstream processing much easier)
+    def sort_key(line):
+        """
+        Sorting is not actually trivial. We might have:
+            16.00 start activity1
+            16.00 stop activity1    # Stopped within less than 1 minute
+        or
+            15.50 start activity2
+            16.00 stop activity2
+            16.00 start activity1   # A new activity started right after
+            16.00 stop activity1    # and is then stopped again
+        In this case, sorting by lineno might be the best option...
+        This might provide issues in the above case if sourced from multiple files,
+        i.e. if you stop one activity in one file and start another in the same minute in another file.
+        """
+        return (line["datetime"], line["filename"], line["lineno"], line["label"], line["action"])
+    lines.sort(key=sort_key)
+    lines_by_label = defaultdict(list)
+    for linedict in lines:
+        label = linedict["label"]
+        # Do not add stop entries if this activity has already been stopped:
+        if discart_redundant_stops and linedict["label"] == "stop" \
+        and (not lines_by_label[label] or lines_by_label[label][-1] == "stop"):
+            # dont add stop entry if non-empty list or the last entry wasn't stop:
+            # Note: empty lists normally shouldn't happen...
+            logger.debug("Not adding redundant stop entry: %s", linedict)
+            continue
+        # Stop running activities if auto_stop_on_start and action=start:
+        if auto_stop_on_start and linedict["action"] == "start":
+            for other_label, labelentries in lines_by_label.items():
+                # If the last entry is start, then add an entry that closes it:
+                if labelentries[-1]["action"] == "start":
+                    stopdict = {"action": "stop", "label": other_label, "datetime": linedict["datetime"]}
+                    logger.debug("Adding automatic stop entry: %s", stopdict)
+                    labelentries.append(stopdict)
+        linedict.pop("lineno")
+        linedict.pop("filename")
+        # Add entry:
+        lines_by_label[linedict["label"]].append(linedict)
+
     return lines_by_label
 
-def find_timespans_by_label(lines_by_labels):
+
+def find_timespans_by_label(lines_by_label):
     """
     Input dict with lines by labels,
     calculate "entries" by for each start-line, find the next stop line.
     """
     timespans_by_label = defaultdict(list)
-    for label, lines in lines_by_labels.items():
-        for line in lines:
+    for label, lines in lines_by_label.items():
+        for i, line in enumerate(lines):
             #print(line)
             action = line["action"]
             if action == "start":
-                entry = {"label": label, "start": line["datetime"], "lineno": line["lineno"]}
+                # Now that the lines are sorted, we can simplify our checks:
+                entry = {"label": label, "start": line["datetime"]}
                 try:
-                    next_stop = next(line for line in lines
-                                     if line["lineno"] > entry["lineno"] and line["action"] == "stop"
-                                     and line["datetime"] >= entry["start"])
+                    next_stop = next(line for line in lines[i+1:] if line["action"] == "stop")
+                    entry["stop"] = next_stop["datetime"]
                 except StopIteration:
-                    logger.warning("Stoptime for entry %s @ %s WAS NOT FOUND",
+                    logger.warning("Stoptime for entry %s @ %s WAS NOT FOUND. Setting stoptime to now.",
                                    entry["label"], entry["start"])
-                    continue
-                next_start = next((line for line in lines
-                                   if line["lineno"] > entry["lineno"] and line["action"] == "start"
-                                   and line["datetime"] > entry["start"]), None)
+                    entry["stop"] = datetime.now()
+                # Check for overlapping timespans. This shouldn't happen if using auto_stop_on_start=True
+                next_start = next((line for line in lines[i+1:] if line["action"] == "start"), None)
                 if next_start and next_stop["datetime"] > next_start["datetime"]:
                     logger.warning("Stoptime for entry %s @ %s is later than the next "\
                                    "start time for this label: %s > %s",
                                    entry["label"], entry["start"], next_stop["datetime"], next_start["datetime"])
-                    #logger.warning("Stoptime for entry {entry[label]} @ {entry[start]} is later than the next "\
-                    #               "start time for this label: {next_stop[datetime]} > {next_start[datetime]}",
-                    #               entry=entry, next_stop=next_stop, next_start=next_start)
-                entry["stop"] = next_stop["datetime"]
                 entry["timespan"] = entry["stop"] - entry["start"]  # datetime - datetime -> timedelta
                 timespans_by_label[label].append(entry)
     return timespans_by_label
@@ -190,8 +235,6 @@ def plot_timeline(timespans_by_label):
         ax.xaxis.set_major_locator(HourLocator())  # tick every day, v2
         ax.xaxis.set_minor_locator(MinuteLocator())  # tick every minute
 
-
-
     # Graph limits:
     pyplot.xlim(min_startdate-0.1*timespan, max_stopdate+0.1*timespan)    # You have to set this.
     pyplot.ylim(0, len(labels)+1)
@@ -205,7 +248,6 @@ def plot_timeline(timespans_by_label):
     pyplot.show()
 
 
-
 def parse_args(argv=None):
     """
     Parse command line arguments.
@@ -213,6 +255,7 @@ def parse_args(argv=None):
 
     parser = argparse.ArgumentParser(description="Cadnano apply sequence script.")
     parser.add_argument("--verbose", "-v", action="count", help="Increase verbosity.")
+    parser.add_argument("--testing", "-p", action="store_true", help="Run app in simple test mode.")
     #parser.add_argument("--profile", "-p", action="store_true", help="Profile app execution.")
     #parser.add_argument("--print-profile", "-P", action="store_true", help="Print profiling statistics.")
     #parser.add_argument("--profile-outputfn", default="scaffold_rotation.profile",
@@ -229,9 +272,19 @@ def parse_args(argv=None):
     parser.add_argument("--no-timelineplot", action="store_false", dest="timelineplot",
                         help="Do not produce a time-line plot.")
 
+    ## DONE: auto_stop_on_start and discart_redundant_stops flags
+    parser.add_argument("--no-auto-stop-on-start", "-A", action="store_false", dest="auto_stop_on_start")
+    parser.add_argument("--auto-stop-on-start", "-a", action="store_true",
+                        help="Automatically stop running activities when a new activity is started.")
+
+    parser.add_argument("--discart-redundant-stops", "-D", action="store_false", dest="discart_redundant_stops")
+    parser.add_argument("--discart-redundant-stops", "-d", action="store_true",
+                        help="Discart redundant stop entries.")
+
     ## TODO: Filter dates --startdate-after  --enddate-before
     ## TODO: Filter labels
-    ## TODO: More plot types
+    ## TODO: More plot types with totals (pie charts, bar plots, etc)
+    ## TODO: User-customized colors for labels
 
     parser.add_argument("files", nargs="+", metavar="file",
                         help="One or more files with time tracker data in simple line-by-line format.")
@@ -275,17 +328,15 @@ def process_args(argns=None, argv=None):
     return args
 
 
-
-
 def main(argv=None):
     """ Main driver """
     logging.basicConfig(level=10)
     args = process_args(None, argv)
-    lines_by_label = parse_files(args['files'])
+    lines = parse_files(args['files'])
+    lines_by_label = get_lines_by_label(lines)
     timespans_by_label = find_timespans_by_label(lines_by_label)
     if args["timelineplot"]:
         plot_timeline(timespans_by_label)
-
 
 
 def test():
@@ -294,7 +345,12 @@ def test():
                             "tests", "testdata", "TimeTracker.txt")
     args = {"files": [testfile]}
     logging.basicConfig(level=10) #, style="{")
-    lines_by_label = parse_files(args['files'])
+    lines = parse_files(args['files'])
+    print("\nLines:")
+    print(yaml.dump(lines))
+    lines_by_label = get_lines_by_label(lines, auto_stop_on_start=True, discart_redundant_stops=True)
+    print("\nLines by label:")
+    print(yaml.dump(lines_by_label))
     #print("\nlines_by_label:")
     #print(lines_by_label)
     timespans_by_label = find_timespans_by_label(lines_by_label)
