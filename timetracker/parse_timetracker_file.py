@@ -181,6 +181,47 @@ def find_timespans_by_label(lines_by_label):
                 timespans_by_label[label].append(entry)
     return timespans_by_label
 
+def filter_timespans(timespans_by_label, args):
+    time_criteria = ("start_before", "start_after", "end_before", "end_after")
+    if not any(args.get(criteria) for criteria in time_criteria):
+        logger.debug("No time criteria specified... %s", args)
+        return timespans_by_label
+    timespans_before_filtering = len([timespan for timespans in timespans_by_label.values() for timespan in timespans])
+    for criteria in time_criteria:
+        if not args.get(criteria):
+            continue
+        logger.debug("Filtering timespans_by_label on %s %s", criteria, args[criteria])
+        crit_key, side = criteria.split("_")
+        if side == "after":
+            time_ok = lambda timespan: timespan[crit_key] >= args[criteria]
+        elif side == "before":
+            time_ok = lambda timespan: timespan[crit_key] <= args[criteria]
+        else:
+            print("COULD NOT PARSE criteria %s -- %s, %s" % (criteria, crit_key, side))
+        timespans_by_label = {label: [timespan for timespan in timespans if time_ok(timespan)]
+                              for label, timespans in timespans_by_label.items()}
+    timespans_after_filtering = len([timespan for timespans in timespans_by_label.values() for timespan in timespans])
+    logger.debug("Timespans before/after filtering: %s / %s", timespans_before_filtering, timespans_after_filtering)
+    return timespans_by_label
+
+def filter_labels(timespans_by_label, args):
+    """ Filter timespans by labels in args. """
+    if args.get("labels"):
+        args["labels"] = [label.title() for label in args["labels"]] # ensure title case comparison
+        logger.debug("Including only labels: %s", args["labels"])
+        # Need to make list, otherwise we get RuntimeError for changing dict size while iterating over it
+        for key in list(timespans_by_label.keys()):
+            if key not in args["labels"]:
+                logger.debug("Removing timespans for label %s", key)
+                timespans_by_label.pop(key)
+    if args.get("exclude_labels"):
+        args["exclude_labels"] = [label.title() for label in args["exclude_labels"]]
+        logger.debug("Excluding labels: %s", args["exclude_labels"])
+        for key in list(timespans_by_label.keys()):
+            if key in args["exclude_labels"]:
+                logger.debug("Removing timespans for label %s", key)
+                timespans_by_label.pop(key)
+    return timespans_by_label
 
 def plot_timeline(timespans_by_label):
     """
@@ -277,14 +318,24 @@ def parse_args(argv=None):
     parser.add_argument("--auto-stop-on-start", "-a", action="store_true",
                         help="Automatically stop running activities when a new activity is started.")
 
-    parser.add_argument("--discart-redundant-stops", "-D", action="store_false", dest="discart_redundant_stops")
+    parser.add_argument("--no-discart-redundant-stops", "-D", action="store_false", dest="discart_redundant_stops")
     parser.add_argument("--discart-redundant-stops", "-d", action="store_true",
                         help="Discart redundant stop entries.")
 
-    ## TODO: Filter dates --startdate-after  --enddate-before
-    ## TODO: Filter labels
+    ## Done: Filter dates --start-after  --end-before
+    ## Done: Filter labels
     ## TODO: More plot types with totals (pie charts, bar plots, etc)
     ## TODO: User-customized colors for labels
+
+    parser.add_argument("--start-after", nargs=2,
+                        help="Only consider entries with a start date/time after this point (yyyy-mm-dd HH:MM) "\
+                             "Note that you must specify both date and time, separated by space.")
+    parser.add_argument("--start-before", nargs=2, help="Only consider entries with startdate before this.")
+    parser.add_argument("--end-after", nargs=2, help="Only consider entries with enddate after this.")
+    parser.add_argument("--end-before", nargs=2, help="Only consider entries with enddate before this.")
+
+    parser.add_argument("--labels", "-l", nargs="+", help="Only include these labels.")
+    parser.add_argument("--exclude-labels", "-l", nargs="+", help="Exclude these labels.")
 
     parser.add_argument("files", nargs="+", metavar="file",
                         help="One or more files with time tracker data in simple line-by-line format.")
@@ -325,6 +376,14 @@ def process_args(argns=None, argv=None):
         print("WARNING: File/pattern '%s' does not match any files." % pattern)
     args['files'] = [fname for pattern, res in file_pattern_matches for fname in res]
 
+    time_criteria = ("start_before", "start_after", "end_before", "end_after")
+    for criteria in time_criteria:
+        if (not args.get(criteria)) or isinstance(args[criteria], datetime):
+            continue
+        if isinstance(args[criteria], list):
+            args[criteria] = " ".join(args[criteria])
+        args[criteria] = datetime.strptime(args[criteria], "%Y-%m-%d %H:%M")
+
     return args
 
 
@@ -343,7 +402,11 @@ def test():
     """ Primitive test. """
     testfile = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "tests", "testdata", "TimeTracker.txt")
-    args = {"files": [testfile]}
+    args = {"files": [testfile],
+            #"start_before": datetime(2015, 6, 2),
+            #"exclude_labels": ["gloves on"],
+            "labels": ["gloves on", "experiment calculation"],
+            }
     logging.basicConfig(level=10) #, style="{")
     lines = parse_files(args['files'])
     print("\nLines:")
@@ -356,6 +419,11 @@ def test():
     timespans_by_label = find_timespans_by_label(lines_by_label)
     #print("\ntimespans_by_label:")
     #print(timespans_by_label)
+
+    timespans_by_label = filter_timespans(timespans_by_label, args)
+
+    filter_labels(timespans_by_label, args)
+
     plot_timeline(timespans_by_label)
 
 
