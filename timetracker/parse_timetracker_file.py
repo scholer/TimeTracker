@@ -343,6 +343,7 @@ def parse_args(argv=None):
     ## Done: Add short-hand arguments for date filtering: --today, --yesterday, --this-week, --last-week, --this-month
     ## TODO: More plot types with totals (pie charts, bar plots, etc)
     ## TODO: User-customized colors for labels
+    ## TODO: Add user-defined label order
 
     parser.add_argument("--start-after", nargs=2,
                         help="Only consider entries with a start date/time after this point (yyyy-mm-dd HH:MM) "\
@@ -405,8 +406,8 @@ def process_args(argns=None, argv=None):
     if args.get("today"):
         args["start_after"] = datetime(now.year, now.month, now.day)
     if args.get("yesterday"):
-        args["start_before"] = datetime(now.year, now.month, now.day)  # before today midnight
-        args["start_after"] = args["start_before"] - timedelta(1)       # after yesterday midnight
+        args["end_before"] = datetime(now.year, now.month, now.day)     # end before today midnight
+        args["start_after"] = args["end_before"] - timedelta(1)         # after yesterday midnight
     if args.get("this_week"):
         args["start_after"] = datetime(now.year, now.month, now.day) - timedelta(6)
 
@@ -476,6 +477,6 @@ if __name__ == '__main__':
     if "--test2" in sys.argv:
         test2()
     elif "--test" in sys.argv:
-        test()
+        test1()
     else:
         main()
