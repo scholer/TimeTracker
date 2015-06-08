@@ -73,7 +73,8 @@ from datetime import datetime, timedelta
 line_regex_str = r"(?P<datetime>[\d\.-]+[:\s][\d\.:]+)\s+(?P<action>\w+)\s+(?P<label>.+)"
 # New version: # can be used for making tags, comma can be used to make a comment. E.g.
 #   2015-06-08 12.22 start Litterature review #work #fun, M.B. Francis paper/reagents/synthesis
-line_regex_str = r"^(?P<datetime>[\d\.-]+[:\s][\d\.:]+)\s+(?P<action>\w+)\s+(?P<label>[^#,]+)(?P<tags>(\s*#\w+)*)(,\s+(?P<comment>.+))?$"
+line_regex_str = r"^(?P<datetime>[\d\.-]+[:\s][\d\.:]+)\s+(?P<action>\w+)\s+(?P<label>[^#,]+)"\
+                 r"(?P<tags>(\s*#\w+)*)(,\s+(?P<comment>.+))?$"
 line_pat = re.compile(line_regex_str)
 datestrptime = "%Y-%m-%d %H.%M" #"yyyy-mm-dd HH.MM"
 
@@ -181,6 +182,7 @@ def find_timespans_by_label(lines_by_label):
     return timespans_by_label
 
 def filter_timespans(timespans_by_label, args):
+    """ Filter timespans by criteria in args, e.g. start/end time. """
     time_criteria = ("start_before", "start_after", "end_before", "end_after")
     if not any(args.get(criteria) for criteria in time_criteria):
         logger.debug("No time criteria specified... %s", args)
@@ -192,9 +194,9 @@ def filter_timespans(timespans_by_label, args):
         logger.debug("Filtering timespans_by_label on %s %s", criteria, args[criteria])
         crit_key, side = criteria.split("_")
         if side == "after":
-            time_ok = lambda timespan: timespan[crit_key] >= args[criteria]
+            time_ok = lambda timespan: timespan[crit_key] >= args[criteria]     # pylint: disable=W0640
         elif side == "before":
-            time_ok = lambda timespan: timespan[crit_key] <= args[criteria]
+            time_ok = lambda timespan: timespan[crit_key] <= args[criteria]     # pylint: disable=W0640
         else:
             print("COULD NOT PARSE criteria %s -- %s, %s" % (criteria, crit_key, side))
         timespans_by_label = {label: [timespan for timespan in timespans if time_ok(timespan)]
@@ -259,10 +261,11 @@ def plot_timeline(timespans_by_label):
 
     labels = list(timespans_by_label.keys())
     colors = list("rgbcmyk")
-    for i, label in enumerate(labels, 1):
+    colors = colors*int(len(labels)/len(colors)+1)    # Make sure we have more colors than labels
+    for i, label in enumerate(labels):
         entries = timespans_by_label[label]
         for entry in entries:
-            pyplot.hlines(i, entry["start"], entry["stop"], colors[i], lw=12)
+            pyplot.hlines(i+1, entry["start"], entry["stop"], colors[i], lw=12)
     #Setup the plot
     ax = pyplot.gca()
     pyplot.yticks(range(1, len(labels)+1), labels)
@@ -353,8 +356,10 @@ def parse_args(argv=None):
 
     parser.add_argument("--today", action="store_true", help="Only consider entries with startdate during today. "
                         "(Note that date short-hands are mutually exclusive at the moment.)")
-    parser.add_argument("--yesterday", action="store_true", help="Only consider entries with startdate during yesterday.")
-    parser.add_argument("--this-week", action="store_true", help="Only consider entries with startdate during this week.")
+    parser.add_argument("--yesterday", action="store_true",
+                        help="Only consider entries with startdate during yesterday.")
+    parser.add_argument("--this-week", action="store_true",
+                        help="Only consider entries with startdate during this week.")
 
     parser.add_argument("--labels", "-l", nargs="+", help="Only include these labels.")
     parser.add_argument("--exclude-labels", nargs="+", help="Exclude these labels.")
@@ -442,7 +447,7 @@ def test1():
             #"exclude_labels": ["gloves on"],
             #"labels": ["gloves on", "experiment calculation"],
             "today": True,
-            }
+           }
     argv = ["--today", testfile]
     args = process_args(None, argv)
     print("args: %s")
