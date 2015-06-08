@@ -71,6 +71,9 @@ from datetime import datetime, timedelta
 
 
 line_regex_str = r"(?P<datetime>[\d\.-]+[:\s][\d\.:]+)\s+(?P<action>\w+)\s+(?P<label>.+)"
+# New version: # can be used for making tags, comma can be used to make a comment. E.g.
+#   2015-06-08 12.22 start Litterature review #work #fun, M.B. Francis paper/reagents/synthesis
+line_regex_str = r"^(?P<datetime>[\d\.-]+[:\s][\d\.:]+)\s+(?P<action>\w+)\s+(?P<label>[^#,]+)(?P<tags>(\s*#\w+)*)(,\s+(?P<comment>.+))?$"
 line_pat = re.compile(line_regex_str)
 datestrptime = "%Y-%m-%d %H.%M" #"yyyy-mm-dd HH.MM"
 
@@ -87,17 +90,13 @@ def parse_files(filenames):
                 match = line_pat.match(line.strip())
                 if not match:
                     logger.info("%s:%s did not match line regex.", filename, lineno)
-                    #logger.info("{}:{} did not match line regex.", filename, lineno)
                     continue
-                label = match.group("label").title()
-                action = match.group("action").lower()
-                time = datetime.strptime(match.group("datetime"), datestrptime)
-                linedict = {"datetime": time,
-                            "action": action,
-                            "label": label,
-                            "filename": filename,
-                            "lineno": lineno
-                           }
+                linedict = match.groupdict()
+                linedict["label"] = linedict["label"].title()
+                linedict["action"] = linedict["action"].lower()
+                linedict["datetime"] = datetime.strptime(linedict["datetime"], datestrptime)
+                linedict["filename"] = filename
+                linedict["lineno"] = lineno
                 lines.append(linedict)
     return lines
 
