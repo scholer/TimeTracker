@@ -259,7 +259,7 @@ def plot_timeline(timespans_by_label):
     #    pyplot.vlines(xstart, y+0.03, y-0.03, color, lw=2)
     #    pyplot.vlines(xstop, y+0.03, y-0.03, color, lw=2)
 
-    labels = list(timespans_by_label.keys())
+    labels = sorted(timespans_by_label.keys())
     colors = list("rgbcmyk")
     colors = colors*int(len(labels)/len(colors)+1)    # Make sure we have more colors than labels
     for i, label in enumerate(labels):
